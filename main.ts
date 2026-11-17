@@ -11,10 +11,12 @@ import { runBars, type BarsState, type OrderInput } from './vendor/makefun-bars.
 
 const ENTRY_BAR = 5;      // first batch we buy on (bars 0-4 warm-up observation)
 const STOP_DD_BPS = 80;   // hard stop: 0.8% under entry
+const REENTRY_COOLDOWN = 5; // bars to wait after a stop before re-entering
 const MAX_SLIPPAGE_BPS = 10_000;
 
 let barsSeen = 0;
 let exitPrice: bigint | null = null;  // close where we stopped out
+let cooldown = 0;
 
 await runBars({
   onBatch(state: BarsState, _batch): OrderInput[] {
@@ -32,13 +34,16 @@ await runBars({
       const gain = ((close - avg) * 10_000n) / avg;
       if (gain <= -BigInt(STOP_DD_BPS)) {
         exitPrice = close;
+        cooldown = REENTRY_COOLDOWN;
         return [{ side: 'sell', symbol, qty, max_slippage_bps: MAX_SLIPPAGE_BPS }];
       }
       return [];
     }
 
+    if (cooldown > 0) cooldown -= 1;
+
     // flat: buy at ENTRY_BAR, or re-enter after a stop once price recovers above the exit close
-    if (barsSeen === ENTRY_BAR || (exitPrice !== null && close > exitPrice)) {
+    if ((barsSeen === ENTRY_BAR && exitPrice === null) || (exitPrice !== null && cooldown === 0 && close > exitPrice)) {
       const amount = state.weightRoom(symbol);
       if (amount <= 0n) return [];
       const spend = amount < state.cash ? amount : state.cash;
